@@ -17,7 +17,6 @@ function allowCrossDomain(req, res, next) {
 }
 
 app.use(allowCrossDomain);
-//app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended: true}));
 app.use('/', express.static(__dirname + '/public'));
 
@@ -175,8 +174,20 @@ function getPageWelcomeContent() {
       </div>
       <h1>Dear <span id="heading-name">Anonymous</span>!</h1>
       <p class="lead">
+        <p class="loading hide" id="waiting-credentials"><span>.</span><span>.</span><span>.</span></p>
+        <form class="hide" id="credentials-form">
+          <label for="user-input" id="user-label">Username</label>
+          <input type="text" name="user" id="user-input"></input><br>
+          <label for="password-input" id="password-label">Password</label>
+          <input type="password" name="password" id="password-input"></input>
+        </form>
+        <a href="#" class="btn btn-primary btn-lg" id="submit-data-button">
+          Enter Data
+        </a>
+      </p>
+      <p class="lead">
         <a href="#" class="btn btn-primary btn-lg" id="spawn-button">
-          Spawn!
+          Spawn Action
         </a>
       </p>
       <p class="lead">
@@ -184,8 +195,7 @@ function getPageWelcomeContent() {
           Logout
         </a>
       </p>
-    </div>
-  `;
+    </div>`;
 }
 
 function getPageHead() {
@@ -193,16 +203,16 @@ function getPageHead() {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Hello, Blockstack!</title>
+      <title>DOPPLER</title>
       <link rel="stylesheet" href="bootstrap.min.css" />
       <link rel="stylesheet" href="app.css" />
       <script src="bundle.js"></script>
       <script src="app.js"></script>
+      <meta charset="utf-8"/>
     </head>
     <body>
       <div class="site-wrapper">
-        <div class="site-wrapper-inner" id="page">
-  `;
+        <div class="site-wrapper-inner" id="page">`;
 }
 
 function getPageFoot() {
@@ -210,6 +220,5 @@ function getPageFoot() {
         </div>
       </div>
     </body>
-    </html>
-  `;
+    </html>`;
 }
