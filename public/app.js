@@ -1,13 +1,6 @@
 $(function(event) {
   if (blockstack.isUserSignedIn()) {
-    if ($('#page-welcome').length > 0) {
-      // Fill in actual client data and decide what parts
-      // of the page should be visible.
-      showWelcomePage();
-    }
-    else {
-      // Some action is running, render whatever the server does.
-    }
+    showControlPage('#page');
   }
   else if (blockstack.isSignInPending()) {
     // User was redirected to sign-in page. Go back when done.
@@ -17,23 +10,73 @@ $(function(event) {
   }
   else {
     // Show heading and link to sign-in.
-    showSigninPage();
+    showSigninPage('#page');
   }
-})
+});
 
-function showSigninPage() {
-  $('#page-landing').show();
+function showSigninPage(div) {
+  $(div).html(`
+    <p class="lead">
+      <a href="#" class="btn btn-primary btn-lg" id="signin-button">
+        Sign In with Blockstack
+      </a>
+    </p>
+  `);
 
   $('#signin-button').click(function(event) {
     event.preventDefault();
     blockstack.redirectToSignIn();
   });
+
+  $(div).show();
 }
 
-function showWelcomePage() {
+function showControlPage(div) {
+  $(div).html(`
+    <div class="column" id="page-client"></div>
+    <div class="column" id="page-server"></div>`);
+
+  fillColumnClient('#page-client');
+  fillColumnServer('#page-server');
+
+  $(div).show();
+}
+
+function fillColumnClient(div) {
+  $(div).html(`
+    <h2>Client Settings</h2>
+    <div class="avatar-section">
+      <img src="https://s3.amazonaws.com/onename/avatar-placeholder.png"
+           class="img-rounded avatar" id="avatar-image">
+    </div>
+    <h4><span id="heading-name">Anonymous</span></h4>
+    <p class="lead">
+      <p class="loading hide" id="waiting-credentials">
+        <span>.</span><span>.</span><span>.</span>
+      </p>
+      <form class="hide" id="credentials-form">
+        <label for="user-input" id="user-label">Username</label>
+        <input type="text" name="user" id="user-input"></input><br>
+        <label for="password-input" id="password-label">Password</label>
+        <input type="password" name="password" id="password-input"></input>
+      </form>
+      <a href="#" class="btn btn-primary btn-lg" id="submit-data-button">
+        Enter Data
+      </a>
+      <a href="#" class="btn btn-primary btn-lg" id="delete-data-button">
+        Delete Data
+      </a>
+    </p>
+    <p class="lead">
+      <a href="#" class="btn btn-primary btn-lg" id="signout-button">
+        Logout
+      </a>
+    </p>
+  `);
+
   // Fill in actual profile information.
-  var profile = blockstack.loadUserData().profile
-  var person = new blockstack.Person(profile)
+  var profile = blockstack.loadUserData().profile;
+  var person = new blockstack.Person(profile);
   $('#heading-name').html(person.name() ? person.name() : "Nameless Person")
   if (person.avatarUrl()) {
     $('#avatar-image').attr('src', person.avatarUrl())
@@ -45,7 +88,15 @@ function showWelcomePage() {
     blockstack.signUserOut(window.location.href);
   });
 
-  // Define action for data submission.
+  // Define action for deleting blockstack data.
+  $('#delete-data-button').click(function(event) {
+    event.preventDefault();
+    blockstack.putFile('credentials.json', JSON.stringify({}));
+    $('#user-input').val('');
+    $('#password-input').val('');
+  });
+
+  // Define action for storing data in blockstack.
   $('#submit-data-button').click(function(event) {
     event.preventDefault();
 
@@ -93,9 +144,50 @@ function showWelcomePage() {
       }
     }
   });
+}
+
+function fillColumnServer(div) {
+  $(div).html(`
+    <h2>Server Actions</h2>
+    <p class="lead">
+      <a href="#" class="btn btn-primary btn-lg" id="create-browser-button">
+        Start Browser
+      </a>
+    </p>
+    <p class="lead">
+      <a href="#" class="btn btn-primary btn-lg" id="device-emulation-button">
+        Configure iPhone 5
+      </a>
+    </p>
+    <p class="lead">
+      <a href="#" class="btn btn-primary btn-lg" id="google-signin-button">
+        Google Sign-in
+      </a>
+    </p>
+    <p class="lead">
+      <a href="#" class="btn btn-primary btn-lg" id="kill-browser-button">
+        Kill Browser
+      </a>
+    </p>
+  `);
+
+  $('#create-browser-button').click(function(event) {
+    event.preventDefault();
+    submitPostData('/init', {headless: true});
+  });
+
+  $('#kill-browser-button').click(function(event) {
+    event.preventDefault();
+    submitPostData('/kill', {});
+  });
+
+  $('#device-emulation-button').click(function(event) {
+    event.preventDefault();
+    submitPostData('/device', {name: 'iPhone 5'});
+  });
 
   // Define action for spawning an automated process.
-  $('#spawn-button').click(function(event) {
+  $('#google-signin-button').click(function(event) {
     event.preventDefault();
 
     blockstack.getFile("credentials.json")
@@ -110,9 +202,6 @@ function showWelcomePage() {
         alert(e.message);
       });
   });
-
-  // Make the whole content visible.
-  $('#page-welcome').show();
 }
 
 function requiredInput(input, label) {
@@ -138,6 +227,12 @@ function submitPostData(url, params) {
     }));
   }
 
-  $('body').append(form);
-  form.submit();
+  $('#status-panel').html('Working..');
+  $('#status-panel').show();
+  var aggregatedStatus = '';
+
+  $.post(url, form.serialize()).always(function(status) {
+    aggregatedStatus += ' ' + status;
+    $('#status-panel').html(aggregatedStatus);
+  });
 }

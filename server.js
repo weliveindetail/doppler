@@ -4,28 +4,60 @@ const opn = require('opn');
 const cheerio = require('cheerio');
 const base64js = require('base64-js');
 const puppeteer = require('puppeteer');
+const devices = require('puppeteer/DeviceDescriptors');
 const bodyParser = require('body-parser');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const port = 5000;
+const public = path.join(__dirname, 'public');
+
+const DefaultChromiumDevice = {
+  'name': 'LG Optimus L70 landscape',
+  'userAgent': 'Mozilla/5.0 (Linux; U; Android 4.4.2; en-us; LGMS323 Build/KOT49I.MS32310c) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/%s Mobile Safari/537.36',
+  'viewport': {
+    'width': 640,
+    'height': 384,
+    'deviceScaleFactor': 1.25,
+    'isMobile': true,
+    'hasTouch': true,
+    'isLandscape': true
+  }
+};
+
+const readFile = (name, opts = 'utf8') =>
+  new Promise((res, rej) => {
+    fs.readFile(path.join(public, name), opts, (err, data) => {
+      if (err) rej(err);
+      else res(data);
+    });
+  });
+
+const getPageHead = () => readFile('ctrl-head.html');
+const getPageFoot = () => readFile('ctrl-foot.html');
+
+// global state
+var browser;
+var device;
 
 function allowCrossDomain(req, res, next) {
-  res.header('Access-Control-Allow-Origin', '*')
-  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE')
-  res.header('Access-Control-Allow-Headers', 'Content-Type')
-  next()
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  next();
 }
 
 app.use(allowCrossDomain);
 app.use(bodyParser.urlencoded({extended: true}));
-app.use('/', express.static(__dirname + '/public'));
+app.use('/', express.static(path.join(__dirname, '/public')));
 
 app.listen(port, (err) => {
   if (err) {
     return console.log('something bad happened', err)
   }
   console.log(`server is listening on ${port}`)
-  opn('http://localhost:5000')
+  //opn('http://localhost:5000')
 })
 
 function findElem(html, selectors) {
@@ -45,64 +77,184 @@ function findElem(html, selectors) {
   return firstMatch;
 }
 
+function getDeviceConfig(description) {
+  const isComplete = function(d) {
+    return d.hasOwnProperty('userAgent') &&
+           d.hasOwnProperty('viewport');
+  };
+
+  // Complete description given.
+  if (isComplete(description)) {
+    return {
+      name: 'Custom Configuration',
+      userAgent: description.userAgent,
+      viewport: description.viewport,
+    };
+  }
+
+  // No complete description, resolve from list of known devices.
+  if (description.hasOwnProperty('name')) {
+    var knownDevice = devices[description.name];
+    if (knownDevice && isComplete(knownDevice)) {
+      return knownDevice;
+    }
+  }
+
+  // Device unknown.
+  return null;
+
+  /*{
+    'name': 'LG Optimus L70 landscape',
+    'userAgent': 'Mozilla/5.0 (Linux; U; Android 4.4.2; en-us; LGMS323 Build/KOT49I.MS32310c) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/%s Mobile Safari/537.36',
+    'viewport': {
+      'width': 640,
+      'height': 384,
+      'deviceScaleFactor': 1.25,
+      'isMobile': true,
+      'hasTouch': true,
+      'isLandscape': true
+  }*/
+}
+
+function extractViewport() {
+  return {
+    width: document.documentElement.clientWidth,
+    height: document.documentElement.clientHeight,
+    deviceScaleFactor: window.devicePixelRatio
+  };
+}
+
+function renderControlPage(req, res) {
+  (async () => {
+    res.write(await getPageHead());
+    res.write('<div class="site-wrapper-inner hide" id="page"></div>');
+    res.write('<div class="status-panel hide" id="status-panel"></div>');
+    res.write(await getPageFoot());
+    res.end();
+  })();
+}
+
+function openStatusDetails() {
+  return ' <a href="#" onclick="$(\'#full-status\').show()">[expand]</a>' +
+         ' <a href="#" onclick="$(\'#status-panel\').hide()">[dismiss]</a>' +
+         '<div class="hide" id="full-status">';
+}
+
+function closeStatusDetails() {
+  return '</div>';
+}
+
+// Encode and wrap image data
+function scaledPNG(data, view, alt) {
+  var png = base64js.fromByteArray(data);
+  var height = 300; // fixed for now
+  var width = (height * view.width) / view.height;
+
+  return '<img src="data:image/png;base64,' + png + '"' +
+         '     width="' + width + '" height="' + height + '"' +
+         '     alt="' + alt + '"></img>';
+}
+
 app.get('/', function (req, res) {
-  res.write(getPageHead());
+  renderControlPage(req, res);
+});
 
-  // Client selects what's shown
-  res.write(getPageLandingContent());
-  res.write(getPageWelcomeContent());
+app.post('/init', function (req, res) {
+  if (browser) {
+    res.send('Please kill your current browser before initializing a new one.');
+    return;
+  }
 
-  res.write(getPageFoot());
-  res.end();
+  (async () => {
+    var config = {};
+    if (req.body.hasOwnProperty('headless')) {
+      config.headless = req.body.headless;
+    }
+
+    browser = await puppeteer.launch(config);
+    res.write('Started your browser ');
+
+    const page = await browser.newPage();
+    await page.goto('https://www.whatismybrowser.com/detect/what-is-my-user-agent');
+
+    const view = await page.evaluate(extractViewport);
+    const img = await page.screenshot();
+
+    res.write(openStatusDetails())
+    res.write(scaledPNG(img, view, 'whatismybrowser.com'));
+    res.write(closeStatusDetails());
+    res.end();
+  })();
+});
+
+app.post('/kill', function (req, res) {
+  if (!browser) {
+    res.send('You didn\'t start your browser yet. Nothing to do.');
+    return;
+  }
+
+  (async () => {
+    await browser.close();
+    browser = undefined;
+    res.send("Closed your browser");
+  })();
+});
+
+app.post('/device', function (req, res) {
+  if (!browser) {
+    res.send('Please start your browser before setting the device emulation.');
+    return;
+  }
+
+  if (!req || !req.hasOwnProperty('body')) {
+    res.send('Please submit a device name or a full configuration.');
+    return;
+  }
+
+  (async () => {
+    const config = getDeviceConfig(req.body);
+    if (!config) {
+      res.send('Failed to infer device emulation');
+      return;
+    }
+
+    res.write('Emulating device: ' + config.name);
+    device = config;
+
+    const page = await browser.newPage();
+    await page.emulate(device);
+    await page.goto('https://www.whatismybrowser.com/detect/what-is-my-user-agent');
+
+    const view = await page.evaluate(extractViewport);
+    const img = await page.screenshot();
+    res.write(openStatusDetails());
+    res.write(scaledPNG(img, view, 'whatismybrowser.com'));
+    res.write(closeStatusDetails());
+    res.end();
+  })();
 });
 
 app.post('/spawn', function (req, res) {
-  // TODO: don't dump password!
-  console.log('Signing you in to Google with: ', req.body);
-
-  const credentials = {
-    user: req.body.user,
-    password: req.body.password
-  };
-
   (async () => {
-    const browser = await puppeteer.launch(); // {headless: false}
     const page = await browser.newPage();
+    if (device)
+      await page.emulate(device);
+
     await page.goto('https://accounts.google.com');
-
-    // Get viewport as reported by the page
-    const dims = await page.evaluate(() => {
-      return {
-        width: document.documentElement.clientWidth,
-        height: document.documentElement.clientHeight,
-        deviceScaleFactor: window.devicePixelRatio
-      };
-    });
-
-    // Encode and wrap image data
-    var scaledPNG = function(data, alt) {
-      var png = base64js.fromByteArray(data);
-      var width = 400; // fixed for now
-      var height = (width * dims.height) / dims.width;
-      return '<img src="data:image/png;base64,' + png + '" ' +
-                  'width="' + width + '" height="' + height + '"' +
-                  'alt="' + alt + '" />'
-    };
-
-    res.write(getPageHead());
-    res.write("<h1>Signing you in to Google..</h1>");
+    const view = await page.evaluate(extractViewport);
+    var page1, page2, page3;
 
     try {
       // 1st login page
+      page1 = await page.screenshot();
       {
-        res.write(scaledPNG(await page.screenshot(), 'Page 1'));
         const html = await page.content();
 
         // Type E-Mail
         var input = findElem(html, ['input#Email', 'input[type=text]']);
         if (!input)
           throw 'Failed to detect text input for E-Mail in HTML: \n' + html;
-        await page.type(input, credentials.user, {delay: 50});
+        await page.type(input, req.body.user, {delay: 50});
 
         // Click next or press Enter
         const loginSubmitted = page.waitForNavigation();
@@ -116,15 +268,15 @@ app.post('/spawn', function (req, res) {
       }
 
       // 2nd login page
+      page2 = await page.screenshot();
       {
-        res.write(scaledPNG(await page.screenshot(), 'Page 2'));
         const html = await page.content();
 
         // Type password
         var input = findElem(html, ['input#Passwd', 'input[type=password]']);
         if (!input)
           throw 'Failed to detect text input for Password in HTML: \n' + html;
-        await page.type(input, credentials.password, {delay: 50});
+        await page.type(input, req.body.password, {delay: 50});
 
         // Click sign-in or press Enter
         const passwordSubmitted = page.waitForNavigation();
@@ -137,88 +289,24 @@ app.post('/spawn', function (req, res) {
         await passwordSubmitted;
       }
 
-      res.write(scaledPNG(await page.screenshot(), 'Page 3'));
+      page3 = await page.screenshot();
+
+      res.write('Signed in to Google');
+      res.write(openStatusDetails());
+      res.write(scaledPNG(page1, view, 'Page1'));
+      res.write(scaledPNG(page2, view, 'Page2'));
+      res.write(scaledPNG(page3, view, 'Page3'));
+      res.write(closeStatusDetails());
+      res.end();
     }
     catch(msg) {
-      res.write('Error: ' + msg);
-    }
-    finally {
-      var closing = browser.close();
-
-      res.write(getPageFoot());
+      res.write('Sign-in to Google failed: ' + msg);
+      res.write(openStatusDetails());
+      if (page1) res.write(scaledPNG(page1, view, 'Page1'));
+      if (page2) res.write(scaledPNG(page2, view, 'Page2'));
+      if (page3) res.write(scaledPNG(page3, view, 'Page3'));
+      res.write(closeStatusDetails());
       res.end();
-
-      await closing;
     }
   })();
 });
-
-function getPageLandingContent() {
-  return `
-    <div class="panel-landing hide" id="page-landing">
-      <h1 class="landing-heading">Hello, Blockstack!</h1>
-      <p class="lead">
-        <a href="#" class="btn btn-primary btn-lg" id="signin-button">
-          Sign In with Blockstack
-        </a>
-      </p>
-    </div>
-  `;
-}
-
-function getPageWelcomeContent() {
-  return `
-    <div class="panel-welcome hide" id="page-welcome">
-      <div class="avatar-section">
-        <img src="https://s3.amazonaws.com/onename/avatar-placeholder.png" class="img-rounded avatar" id="avatar-image">
-      </div>
-      <h1>Dear <span id="heading-name">Anonymous</span>!</h1>
-      <p class="lead">
-        <p class="loading hide" id="waiting-credentials"><span>.</span><span>.</span><span>.</span></p>
-        <form class="hide" id="credentials-form">
-          <label for="user-input" id="user-label">Username</label>
-          <input type="text" name="user" id="user-input"></input><br>
-          <label for="password-input" id="password-label">Password</label>
-          <input type="password" name="password" id="password-input"></input>
-        </form>
-        <a href="#" class="btn btn-primary btn-lg" id="submit-data-button">
-          Enter Data
-        </a>
-      </p>
-      <p class="lead">
-        <a href="#" class="btn btn-primary btn-lg" id="spawn-button">
-          Spawn Action
-        </a>
-      </p>
-      <p class="lead">
-        <a href="#" class="btn btn-primary btn-lg" id="signout-button">
-          Logout
-        </a>
-      </p>
-    </div>`;
-}
-
-function getPageHead() {
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>DOPPLER</title>
-      <link rel="stylesheet" href="bootstrap.min.css" />
-      <link rel="stylesheet" href="app.css" />
-      <script src="bundle.js"></script>
-      <script src="app.js"></script>
-      <meta charset="utf-8"/>
-    </head>
-    <body>
-      <div class="site-wrapper">
-        <div class="site-wrapper-inner" id="page">`;
-}
-
-function getPageFoot() {
-  return `
-        </div>
-      </div>
-    </body>
-    </html>`;
-}
